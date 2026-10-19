@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 300px; padding: 14px; font-family: system-ui, sans-serif; font-size: 13px; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  label { display: block; margin: 8px 0 3px; font-weight: 600; }
+  input[type=text], input[type=password], select { width: 100%; box-sizing: border-box; padding: 6px; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  button { flex: 1; padding: 7px; cursor: pointer; }
+  #status { margin-top: 10px; min-height: 18px; color: #555; }
+  #status.ok { color: #15803d; }
+  #status.err { color: #b91c1c; }
+  .hint { color: #777; font-size: 11px; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <h1>TabRelay</h1>
+  <label for="relayUrl">Relay server URL</label>
+  <input type="text" id="relayUrl" placeholder="http://127.0.0.1:8765">
+  <label for="apiKey">API key</label>
+  <input type="password" id="apiKey" placeholder="trl_...">
+  <label for="pollSeconds">Poll interval</label>
+  <select id="pollSeconds">
+    <option value="30">30 seconds</option>
+    <option value="60">1 minute</option>
+    <option value="120">2 minutes</option>
+  </select>
+  <label><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="save">Save</button>
+    <button id="test">Test</button>
+  </div>
+  <div id="status"></div>
+  <div class="hint">Headless deployments: configure via Chrome managed policy instead (see README). The red dot on the toolbar icon means a command is executing.</div>
+  <script src="popup.js"></script>
+</body>
+</html>

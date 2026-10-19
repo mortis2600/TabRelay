@@ -1,0 +1,1 @@
+{"properties":{"apiKey":{"description":"API key for the TabRelay relay server","type":"string"},"enabled":{"description":"Enable command polling","type":"boolean"},"pollSeconds":{"description":"Poll interval in seconds (platform minimum is 30)","type":"number"},"relayUrl":{"description":"TabRelay relay server base URL","type":"string"}},"type":"object"}

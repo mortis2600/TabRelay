@@ -1,0 +1,13 @@
+[Unit]
+Description=TabRelay keyed command relay
+After=network.target tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @RELAY_PY@ --host @TS_IP@ --port @RELAY_PORT@
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
