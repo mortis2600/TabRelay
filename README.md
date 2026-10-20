@@ -159,6 +159,16 @@ pattern; adapt the hosts to yours.)
   the debugger session mid-command and hangs the command. Use plain
   `dom.click` for submits (it fires form submission fine), and read the
   outcome page/alert afterwards.
+- Run long form fills in **staged batches**, not one giant sequence: a
+  batch that races a tab navigation silently loses its middle commands
+  (bit on the Clearance fill, 2026-10-20 — the tab fell back to the hub
+  and half the batch no-opped). Split: fields → cover+description →
+  filters → save, and verify the tab URL / a screenshot between batches.
+- Publisher Hub "Add download" on a title with no digital format opens
+  the file manager for a NEW digital format (that's how Coven got its
+  digital download alongside its Softcover POD format). The manager URL
+  (`pub_upload_files.php?products_id=<id>`) also reveals the product ID
+  of a just-created title.
 - Right after a browser relaunch, `page.screenshot` can return a stale
   compositor frame identical to an earlier capture — re-capture after an
   interaction before trusting it.
