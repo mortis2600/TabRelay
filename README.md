@@ -102,7 +102,9 @@ pattern; adapt the hosts to yours.)
 | `page.screenshot` | optional `tabId` | `{image}` JPEG data URL |
 | `page.wait` | `ms` (max 30000) | — |
 | `dom.exists` | `selector`, optional `tabId` | `{exists, count}` |
-| `dom.click` | `selector`, optional `tabId` | clicks the element |
+| `dom.click` | `selector`, optional `tabId` | clicks the element (synthetic `el.click()`, `isTrusted=false`) |
+| `dom.realclick` | `selector`, optional `tabId` | trusted click via CDP `Input.dispatchMouseEvent` (`isTrusted=true`); for frameworks that ignore synthetic clicks (e.g. Angular/Material) |
+| `dom.setfiles` | `selector`, `path` (VM-local) or `files[]`, optional `tabId` | sets a file input's files via CDP `DOM.setFileInputFiles` (v0.2.2); the reliable upload route — `dom.upload` fetch hangs on HTTPS pages and the GTK chooser drops the file |
 | `dom.type` | `selector`, `text`, optional `tabId`, `append`, `submit` | types with real input events (React-safe) |
 
 `tabId` defaults to the active tab. Selectors are CSS (`#id`, `.class`, `input[name=q]`).
@@ -119,6 +121,49 @@ pattern; adapt the hosts to yours.)
   executes, and the popup has an Enabled kill-switch.
 - Nothing phones home. The extension only ever talks to the relay URL you
   configure.
+
+## Notes on `dom.realclick`
+
+- The content script locates a *clickable point*, not just the matched
+  element's center: selectors often match a wide wrapper (e.g. an Angular
+  custom element) whose center is empty space, so it prefers a visible
+  interactive descendant (`a[href]`, `button`, …) and verifies candidate
+  points with `elementFromPoint`.
+- The background worker attaches with `chrome.debugger` (needs the
+  `debugger` manifest permission), dispatches
+  `mouseMoved → mousePressed → mouseReleased` with human-ish timing and a
+  proper `buttons` bitmask, then detaches. Launch Chromium with
+  `--silent-debugger-extension-api` to suppress the "started debugging"
+  infobar. If another debugger is already attached to the tab, the command
+  fails cleanly instead of detaching someone else's session.
+- **Redeploy gotcha:** Chromium serves an already-registered unpacked
+  extension's service worker from the profile's Service Worker ScriptCache,
+  *not* from the files on disk — restarting the browser alone does not pick
+  up edited extension files. After changing the deployed extension, stop
+  Chromium and move `Default/Service Worker` aside (it regenerates), then
+  relaunch. Also update *every* registered copy of the extension directory:
+  stale registrations from earlier "Load unpacked" sessions stay enabled in
+  the profile and also poll the relay.
+
+## Field lessons (2026-10-20, DTRPG run)
+
+- `dom.locate` (used by `realclick`/`setfiles`) iterates `querySelectorAll`
+  and picks the first **visible** non-zero-box match (v0.2.2) — pages carry
+  hidden duplicate elements earlier in DOM order.
+- A page-level JS `alert()` **wedges the worker**: the modal blocks the
+  tab's JS thread, so every queued command to that tab hangs. Recovery:
+  dismiss the alert with a real keypress (`xdotool key Return` over SSH)
+  or relaunch the browser. `scrot` on the VM's X display shows the true
+  screen (including alerts) when the relay can't answer.
+- Do **not** `realclick` a form submit button: the navigation tears down
+  the debugger session mid-command and hangs the command. Use plain
+  `dom.click` for submits (it fires form submission fine), and read the
+  outcome page/alert afterwards.
+- Right after a browser relaunch, `page.screenshot` can return a stale
+  compositor frame identical to an earlier capture — re-capture after an
+  interaction before trusting it.
+- Background tabs get their uploads throttled to a trickle; `tabs.activate`
+  the working tab before starting a large upload.
 
 ## Limitations
 

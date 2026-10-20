@@ -102,6 +102,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quieter logs
         sys.stderr.write("[tabrelay] " + fmt % args + "\n")
 
+    def do_OPTIONS(self):
+        # CORS preflight for content-script fetches to /api/files/.
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "X-API-Key, Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        # Chrome Private Network Access: public HTTPS pages (the content
+        # script's context) fetching loopback must see this on the preflight,
+        # or the fetch dies with "Failed to fetch" (found 2026-10-20, DTRPG
+        # cover upload on tools.drivethrurpg.com).
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
+
     # -- routing -----------------------------------------------------------
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -136,6 +149,42 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/queue":
             with st.lock:
                 self._json(200, {"queued": len(st.commands)})
+            return
+
+        if path.startswith("/api/files/"):
+            # Serve files from the files directory for dom.upload.
+            # The content script fetches directly (with API key header).
+            import os
+            files_dir = os.environ.get("TABRELAY_FILES", "/opt/tabrelay/files")
+            name = path[len("/api/files/"):]
+            # Prevent directory traversal.
+            if ".." in name or name.startswith("/") or not name:
+                self._json(400, {"ok": False, "error": "invalid filename"})
+                return
+            fpath = os.path.join(files_dir, name)
+            if not os.path.isfile(fpath):
+                self._json(404, {"ok": False, "error": "file not found"})
+                return
+            # Stream the file with CORS headers for content-script fetches.
+            ctype = "application/pdf" if name.lower().endswith(".pdf") else "application/octet-stream"
+            try:
+                fsize = os.path.getsize(fpath)
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(fsize))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "X-API-Key, Content-Type")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.end_headers()
+                with open(fpath, "rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
 
         if path.startswith("/api/results/"):

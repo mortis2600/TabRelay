@@ -28,10 +28,10 @@ if [ "$vault_ok" = 0 ]; then
   pkill -f "18444:100.108.47.121:80" 2>/dev/null
   sleep 1
   # shellcheck disable=SC2086
-  ssh $SSH_OPTS -f -N -L "127.0.0.1:$VAULT_LOCAL:100.108.47.121:80" valhalla-jump
+  ssh $SSH_OPTS -f -N -L "127.0.0.1:$VAULT_LOCAL:100.108.47.121:80" valhalla-jump </dev/null >/dev/null 2>&1
   sleep 2
 fi
-# Leg B: tabrelay VM listeners (relay 18765 + vault -R 18443), via valhalla-jump.
+# Leg B: tabrelay VM listeners (relay 18765 + relay2 18766 + vault -R 18443), via valhalla-jump.
 # Restarted when the relay is down OR the vault chain is down, so the -R
 # forward always rides a fresh connection.
 if [ "$relay_ok" = 0 ] || [ "$vault_ok" = 0 ]; then
@@ -40,7 +40,8 @@ if [ "$relay_ok" = 0 ] || [ "$vault_ok" = 0 ]; then
   # shellcheck disable=SC2086
   ssh $SSH_OPTS -J valhalla-jump -f -N \
     -L "$PORT:127.0.0.1:8765" \
-    -R "127.0.0.1:18443:127.0.0.1:$VAULT_LOCAL" "$VM"
+    -L "18766:127.0.0.1:8766" \
+    -R "127.0.0.1:18443:127.0.0.1:$VAULT_LOCAL" "$VM" </dev/null >/dev/null 2>&1
   sleep 2
 fi
 

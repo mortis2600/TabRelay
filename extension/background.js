@@ -171,10 +171,148 @@ async function dispatch(action, p, cmdId) {
       return await sendToTab(tab, "dom.exists", { selector: p.selector });
     }
 
+    case "dom.html": {
+      if (!p.selector) throw new Error("dom.html needs {selector}");
+      const tab = await resolveTab(p.tabId);
+      return await sendToTab(tab, "dom.html", { selector: p.selector });
+    }
+
+    case "dom.fill_by_label": {
+      if (!p.label) throw new Error("dom.fill_by_label needs {label}");
+      if (p.text === undefined) throw new Error("dom.fill_by_label needs {text}");
+      const tab = await resolveTab(p.tabId);
+      return await sendToTab(tab, "dom.fill_by_label", { label: p.label, text: p.text });
+    }
+
     case "dom.click": {
       if (!p.selector) throw new Error("dom.click needs {selector}");
       const tab = await resolveTab(p.tabId);
       return await sendToTab(tab, "dom.click", { selector: p.selector });
+    }
+
+    case "dom.realclick": {
+      // Trusted click: synthetic el.click() events are isTrusted=false and
+      // some frameworks (Angular/Material, e.g. Google Messages web) ignore
+      // them. This locates the element via the content script, then uses the
+      // chrome.debugger API to dispatch real CDP mouse input, which the page
+      // receives as trusted (isTrusted=true) pointer/mouse events.
+      if (!p.selector) throw new Error("dom.realclick needs {selector}");
+      const tab = await resolveTab(p.tabId);
+      // Input goes to the tab's rendered surface; make sure it is the
+      // visible one before dispatching viewport coordinates.
+      await chrome.tabs.update(tab.id, { active: true });
+      try {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch (_e) {
+        /* headless / no window focus: CDP input still targets the tab */
+      }
+      const loc = await sendToTab(tab, "dom.locate", { selector: p.selector });
+      const target = { tabId: tab.id };
+      const dbgSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const jitterMs = (min, max) => min + Math.random() * (max - min);
+      let attached = false;
+      try {
+        try {
+          await chrome.debugger.attach(target, "1.3");
+          attached = true;
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          if (/already attached/i.test(msg)) {
+            throw new Error(
+              "dom.realclick: another debugger is already attached to tab " +
+                tab.id +
+                "; not detaching someone else's session"
+            );
+          }
+          throw new Error("dom.realclick: debugger attach failed: " + msg);
+        }
+        const sendMouse = (type, extra) =>
+          chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+            type,
+            x: loc.x,
+            y: loc.y,
+            button: "none",
+            buttons: 0,
+            clickCount: 0,
+            ...(extra || {}),
+          });
+        await sendMouse("mouseMoved");
+        await dbgSleep(jitterMs(70, 160));
+        await sendMouse("mousePressed", { button: "left", buttons: 1, clickCount: 1 });
+        await dbgSleep(jitterMs(50, 120));
+        await sendMouse("mouseReleased", { button: "left", buttons: 0, clickCount: 1 });
+      } finally {
+        if (attached) {
+          try {
+            await chrome.debugger.detach(target);
+          } catch (_e) {
+            /* tab may have navigated/closed mid-click; detach is best-effort */
+          }
+        }
+      }
+      return { clicked: true, trusted: true, x: loc.x, y: loc.y, hit: loc.hitTag || null };
+    }
+
+    case "dom.setfiles": {
+      // Set a file input's files from VM-local paths via CDP
+      // DOM.setFileInputFiles. The fetch-based dom.upload dies on HTTPS
+      // pages (Chrome Private Network Access / mixed-content rules block
+      // the content script's loopback fetch, and the hung fetch wedges the
+      // sequential worker), and driving the GTK file chooser with xdotool
+      // proved unreliable (Enter closes the dialog without delivering the
+      // file to Chromium). CDP sets input.files directly and fires the
+      // native change events. Found 2026-10-20 on the DTRPG cover upload.
+      if (!p.selector) throw new Error("dom.setfiles needs {selector}");
+      const files = Array.isArray(p.files) ? p.files : p.path ? [p.path] : [];
+      if (!files.length || files.some((f) => typeof f !== "string" || !f)) {
+        throw new Error("dom.setfiles needs {path} (VM-local absolute path)");
+      }
+      const tab = await resolveTab(p.tabId);
+      await chrome.tabs.update(tab.id, { active: true });
+      try {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch (_e) {
+        /* headless / no window focus: CDP still targets the tab */
+      }
+      const target = { tabId: tab.id };
+      let attached = false;
+      try {
+        try {
+          await chrome.debugger.attach(target, "1.3");
+          attached = true;
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          if (/already attached/i.test(msg)) {
+            throw new Error(
+              "dom.setfiles: another debugger is already attached to tab " +
+                tab.id +
+                "; not detaching someone else's session"
+            );
+          }
+          throw new Error("dom.setfiles: debugger attach failed: " + msg);
+        }
+        const doc = await chrome.debugger.sendCommand(target, "DOM.getDocument", { depth: 1 });
+        const found = await chrome.debugger.sendCommand(target, "DOM.querySelector", {
+          nodeId: doc.root.nodeId,
+          selector: p.selector,
+        });
+        if (!found || !found.nodeId) {
+          throw new Error("dom.setfiles: no such element: " + p.selector);
+        }
+        await chrome.debugger.sendCommand(target, "DOM.setFileInputFiles", {
+          nodeId: found.nodeId,
+          files,
+        });
+      } finally {
+        if (attached) {
+          try {
+            await chrome.debugger.detach(target);
+          } catch (_e) {
+            /* best-effort detach */
+          }
+        }
+      }
+      return { set: true, files };
     }
 
     case "dom.type": {
@@ -186,6 +324,23 @@ async function dispatch(action, p, cmdId) {
         text: p.text,
         append: p.append === true,
         submit: p.submit === true,
+      });
+    }
+
+    case "dom.upload": {
+      if (!p.selector) throw new Error("dom.upload needs {selector}");
+      if (!p.url) throw new Error("dom.upload needs {url}");
+      const tab = await resolveTab(p.tabId);
+      // Pass the URL and API key to the content script; it fetches directly
+      // (avoids base64-encoding large files in the background worker).
+      const cfg = await getConfig();
+      const filename = p.filename || p.url.split("/").pop().split("?")[0] || "upload.bin";
+      return await sendToTab(tab, "dom.upload", {
+        selector: p.selector,
+        url: p.url,
+        filename,
+        mimeType: p.mimeType,
+        apiKey: cfg.apiKey || "",
       });
     }
 
